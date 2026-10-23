@@ -28,8 +28,9 @@ MAX_VERIFY = 2                   # extra calls to check the return leg
 # Total calls per run is at most PAIRS_PER_DAY + MAX_VERIFY.
 # ---------------------------------------------------------------------------
 
-DAILY_LOG = Path("daily_cheapest.csv")
-PAIR_LOG = Path("pair_prices.csv")
+LOG_DIR = Path("logs")
+DAILY_LOG = LOG_DIR / "daily_cheapest.csv"
+PAIR_LOG = LOG_DIR / "pair_prices.csv"
 
 
 def all_pairs():
@@ -83,7 +84,17 @@ def layovers(opt):
                      for l in opt.get("layovers", [])) or "nonstop"
 
 
+def flights_link(data, out, ret):
+    """Link to the Google Flights search for these dates."""
+    url = data.get("search_metadata", {}).get("google_flights_url")
+    if url:
+        return url
+    q = f"Flights from CPH to New York on {out} through {ret}"
+    return "https://www.google.com/travel/flights?q=" + urllib.parse.quote(q)
+
+
 def append_row(path, header, row):
+    path.parent.mkdir(parents=True, exist_ok=True)
     new = not path.exists()
     with path.open("a", newline="") as f:
         w = csv.writer(f)
@@ -125,10 +136,12 @@ def main():
             print(f"No acceptable options for {out} -> {ret}")
             continue
         best = min(good, key=lambda o: o["price"])
-        candidates.append((best["price"], out, ret, best, base))
+        link = flights_link(data, out, ret)
+        candidates.append((best["price"], out, ret, best, base, link))
         append_row(PAIR_LOG,
-                   ["checked_on", "outbound", "return", "price", "airlines", "outbound_layovers"],
-                   [today, out, ret, best["price"], airlines(best), layovers(best)])
+                   ["checked_on", "outbound", "return", "price", "airlines",
+                    "outbound_layovers", "link"],
+                   [today, out, ret, best["price"], airlines(best), layovers(best), link])
 
     if not candidates:
         print("Nothing found today.")
@@ -136,9 +149,9 @@ def main():
 
     candidates.sort(key=lambda c: c[0])
     header = ["checked_on", "price", "currency", "outbound", "return",
-              "airlines", "outbound_layovers", "return_layovers", "return_verified"]
+              "airlines", "outbound_layovers", "return_layovers", "return_verified", "link"]
 
-    for price, out, ret, best, base in candidates[:MAX_VERIFY]:
+    for price, out, ret, best, base, link in candidates[:MAX_VERIFY]:
         try:
             ret_opt = verify_return(base, best)
         except Exception as e:
@@ -147,14 +160,14 @@ def main():
         if ret_opt:
             append_row(DAILY_LOG, header,
                        [today, ret_opt["price"], CURRENCY, out, ret,
-                        airlines(best), layovers(best), layovers(ret_opt), "yes"])
+                        airlines(best), layovers(best), layovers(ret_opt), "yes", link])
             return
 
     # No candidate passed the return-leg check; log the cheapest, flagged.
-    price, out, ret, best, _ = candidates[0]
+    price, out, ret, best, _, link = candidates[0]
     append_row(DAILY_LOG, header,
                [today, price, CURRENCY, out, ret,
-                airlines(best), layovers(best), "", "no"])
+                airlines(best), layovers(best), "", "no", link])
 
 
 if __name__ == "__main__":
